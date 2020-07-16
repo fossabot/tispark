@@ -139,11 +139,6 @@ public class LockResolverClientV4 extends AbstractRegionStoreClient
                 callerStartTS, l.getTxnID(), status.getCommitTS(), l.getKey().toByteArray());
           }
         } else {
-          if (status.getAction() != org.tikv.kvproto.Kvrpcpb.Action.MinCommitTSPushed) {
-            pushFail = true;
-          } else {
-            pushed.add(l.getTxnID());
-          }
         }
       }
     }
@@ -267,72 +262,7 @@ public class LockResolverClientV4 extends AbstractRegionStoreClient
       return status;
     }
 
-    // CheckTxnStatus may meet the following cases:
-    // 1. LOCK
-    // 1.1 Lock expired -- orphan lock, fail to update TTL, crash recovery etc.
-    // 1.2 Lock TTL -- active transaction holding the lock.
-    // 2. NO LOCK
-    // 2.1 Txn Committed
-    // 2.2 Txn Rollbacked -- rollback itself, rollback by others, GC tomb etc.
-    // 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
-    Supplier<Kvrpcpb.CheckTxnStatusRequest> factory =
-        () -> {
-          TiRegion primaryKeyRegion = regionManager.getRegionByKey(primary);
-          return Kvrpcpb.CheckTxnStatusRequest.newBuilder()
-              .setContext(primaryKeyRegion.getContext())
-              .setPrimaryKey(primary)
-              .setLockTs(txnID)
-              .setCallerStartTs(callerStartTS)
-              .setCurrentTs(currentTS)
-              .setRollbackIfNotExist(rollbackIfNotExist)
-              .build();
-        };
-
-    while (true) {
-      TiRegion primaryKeyRegion = regionManager.getRegionByKey(primary);
-      KVErrorHandler<Kvrpcpb.CheckTxnStatusResponse> handler =
-          new KVErrorHandler<>(
-              regionManager,
-              this,
-              this,
-              primaryKeyRegion,
-              resp -> resp.hasRegionError() ? resp.getRegionError() : null,
-              resp -> resp.hasError() ? resp.getError() : null,
-              resolveLockResult -> null,
-              callerStartTS,
-              false);
-
-      // new RegionStoreClient for PrimaryKey
-      RegionStoreClient primaryKeyRegionStoreClient = clientBuilder.build(primary);
-      Kvrpcpb.CheckTxnStatusResponse resp =
-          primaryKeyRegionStoreClient.callWithRetry(
-              bo, TikvGrpc.getKvCheckTxnStatusMethod(), factory, handler);
-
-      if (resp.hasRegionError()) {
-        bo.doBackOff(BoRegionMiss, new RegionException(resp.getRegionError()));
-        continue;
-      }
-
-      if (resp.hasError()) {
-        Kvrpcpb.KeyError keyError = resp.getError();
-
-        if (keyError.hasTxnNotFound()) {
-          throw new TxnNotFoundException();
-        }
-
-        logger.error(String.format("unexpected cleanup err: %s, tid: %d", keyError, txnID));
-        throw new KeyException(keyError);
-      }
-
-      if (resp.getLockTtl() != 0) {
-        status = new TxnStatus(resp.getLockTtl(), 0L, resp.getAction());
-      } else {
-        status = new TxnStatus(0L, resp.getCommitVersion(), resp.getAction());
-        saveResolved(txnID, status);
-      }
-
-      return status;
-    }
+    return null;
   }
 
   private void resolveLock(

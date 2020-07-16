@@ -122,7 +122,7 @@ public class TiRegion implements Serializable {
     builder.setIsolationLevel(this.isolationLevel);
     builder.setPriority(this.commandPri);
     builder.setRegionId(meta.getId()).setPeer(this.peer).setRegionEpoch(this.meta.getRegionEpoch());
-    builder.addAllResolvedLocks(resolvedLocks);
+    // builder.addAllResolvedLocks(resolvedLocks);
     return builder.build();
   }
 

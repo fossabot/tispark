@@ -37,7 +37,7 @@ public class Lock {
     ttl = l.getLockTtl() == 0 ? DEFAULT_LOCK_TTL : l.getLockTtl();
     txnSize = l.getTxnSize();
     lockType = l.getLockType();
-    lockForUpdateTs = l.getLockForUpdateTs();
+    lockForUpdateTs = 0;
   }
 
   public long getTxnID() {

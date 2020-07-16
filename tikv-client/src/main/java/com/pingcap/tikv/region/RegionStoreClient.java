@@ -407,7 +407,6 @@ public class RegionStoreClient extends AbstractRegionStoreClient {
                   .addAllMutations(mutations)
                   .setLockTtl(ttl)
                   .setSkipConstraintCheck(skipConstraintCheck)
-                  .setMinCommitTs(startTs)
                   .build();
       KVErrorHandler<PrewriteResponse> handler =
           new KVErrorHandler<>(
@@ -604,7 +603,7 @@ public class RegionStoreClient extends AbstractRegionStoreClient {
             Coprocessor.Request.newBuilder()
                 .setContext(region.getContext(getResolvedLocks(startTs)))
                 .setTp(REQ_TYPE_DAG.getValue())
-                .setStartTs(startTs)
+                // .setStartTs(startTs)
                 .setData(req.toByteString())
                 .addAllRanges(ranges)
                 .build();
