@@ -714,8 +714,8 @@ class TiBatchWriteTable(
         }
 
         val rdd = wrappedEncodedRdd.filter(_.indexId == index.getId).filter { t =>
-            val value = t.row.get(colOffset, dataType)
-            value != null && value.toString != null
+          val value = t.row.get(colOffset, dataType)
+          value != null && value.toString != null
         }
         val regionSplitNum = if (options.regionSplitNum != 0) {
           options.regionSplitNum

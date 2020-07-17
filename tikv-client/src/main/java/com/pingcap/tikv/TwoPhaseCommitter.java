@@ -173,6 +173,8 @@ public class TwoPhaseCommitter {
             new GrpcException(
                 String.format("Txn commit primary key failed, regionId=%s", tiRegion.getId()),
                 commitResult.getException()));
+        regionManager.invalidateStore(store.getId());
+        regionManager.invalidateRegion(tiRegion.getId());
         // re-split keys and commit again.
         this.doCommitPrimaryKeyWithRetry(backOffer, key, commitTs);
       }

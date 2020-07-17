@@ -296,22 +296,31 @@ class TiBatchWrite(
     // executors secondary commit
     if (!options.skipCommitSecondaryKey) {
       logger.info("start to commitSecondaryKeys")
+      var tot = 0
+      var suc = 0
       secondaryKeysRDD.foreachPartition { iterator =>
         val ti2PCClientOnExecutor = new TwoPhaseCommitter(tiConf, startTs)
 
+        var num = 0
         val keys = iterator.map { keyValue =>
-          new ByteWrapper(keyValue._1.bytes)
+          {
+            num += 1
+            new ByteWrapper(keyValue._1.bytes)
+          }
         }.asJava
+
+        tot += num
 
         try {
           ti2PCClientOnExecutor.commitSecondaryKeys(keys, commitTs)
+          suc += num
         } catch {
           case e: TiBatchWriteException =>
             // ignored
             logger.warn(s"commit secondary key error", e)
         }
       }
-      logger.info("commitSecondaryKeys finish")
+      logger.info(s"commitSecondaryKeys finish, suc: $suc, tot: $tot")
     } else {
       logger.info("skipping commit secondary key")
     }
