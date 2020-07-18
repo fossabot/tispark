@@ -183,6 +183,9 @@ class TiBatchWriteTable(
       } else {
         generateDataToBeRemovedRddV1(distinctWrappedRowRdd, startTimeStamp)
       }
+
+      deletion.persist(org.apache.spark.storage.StorageLevel.DISK_ONLY)
+
       if (!options.replace && !deletion.isEmpty()) {
         throw new TiBatchWriteException("data to be inserted has conflicts with TiKV data")
       }
