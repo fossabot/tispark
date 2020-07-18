@@ -80,7 +80,7 @@ class TiBatchWriteTable(
   tableColSize = tiTableInfo.getColumns.size()
 
   def persist(): Unit = {
-    df.persist(org.apache.spark.storage.StorageLevel.DISK_ONLY)
+    df.persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK)
   }
 
   def isDFEmpty: Boolean = {
@@ -184,7 +184,7 @@ class TiBatchWriteTable(
         generateDataToBeRemovedRddV1(distinctWrappedRowRdd, startTimeStamp)
       }
 
-      deletion.persist(org.apache.spark.storage.StorageLevel.DISK_ONLY)
+      deletion.persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK)
 
       if (!options.replace && !deletion.isEmpty()) {
         throw new TiBatchWriteException("data to be inserted has conflicts with TiKV data")
