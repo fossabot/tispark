@@ -755,7 +755,7 @@ class TiBatchWriteTable(
   private def unionAll(
       sc: SparkContext,
       rdds: Map[Long, RDD[WrappedEncodedRow]]): RDD[WrappedEncodedRow] = {
-    rdds.values.foldLeft(sc.emptyRDD[WrappedEncodedRow])(_ ++ _)
+    sc.union(rdds.values.toSeq)
   }
 
   private def generateIndexKV(
