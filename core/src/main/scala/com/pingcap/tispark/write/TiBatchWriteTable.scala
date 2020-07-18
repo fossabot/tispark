@@ -900,7 +900,7 @@ class TiBatchWriteTable(
         val regionSplitNum = if (options.regionSplitNum != 0) {
           options.regionSplitNum
         } else {
-          val splitNum = estimateRegionSplitNum(recordSize)
+          val splitNum = Math.min(1000, estimateRegionSplitNum(recordSize))
           logger.info(s"record region split num=$splitNum")
           splitNum
         }
