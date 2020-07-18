@@ -80,7 +80,7 @@ class TiBatchWriteTable(
   tableColSize = tiTableInfo.getColumns.size()
 
   def persist(): Unit = {
-    df.persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK)
+    df.persist(org.apache.spark.storage.StorageLevel.DISK_ONLY)
   }
 
   def isDFEmpty: Boolean = {
