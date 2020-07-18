@@ -246,7 +246,7 @@ class TiBatchWriteTable(
     val encodedKVPairRDD =
       encodedTiRowRDD.map(row => EncodedKVPair(row.encodedKey, row.encodedValue))
     // shuffle data in same task which belong to same region
-    val shuffledRDD = shuffleKeyToSameRegion(encodedKVPairRDD).cache()
+    val shuffledRDD = shuffleKeyToSameRegion(encodedKVPairRDD)
     shuffledRDD
   }
 
