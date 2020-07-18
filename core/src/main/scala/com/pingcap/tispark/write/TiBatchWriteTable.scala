@@ -31,6 +31,7 @@ import com.pingcap.tikv.types.IntegerType
 import com.pingcap.tikv.{TiBatchWriteUtils, TiConfiguration, TiDBJDBCClient, TiSession}
 import com.pingcap.tispark.TiTableReference
 import com.pingcap.tispark.utils.TiUtil
+import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.functions._
@@ -100,6 +101,7 @@ class TiBatchWriteTable(
   }
 
   def preCalculate(startTimeStamp: TiTimestamp): RDD[(SerializableKey, Array[Byte])] = {
+    val sc = tiContext.sparkSession.sparkContext
     // auto increment
     val rdd = if (tiTableInfo.hasAutoIncrementColumn) {
       val isProvidedID = tableColSize == colsInDf.length
@@ -185,38 +187,42 @@ class TiBatchWriteTable(
         throw new TiBatchWriteException("data to be inserted has conflicts with TiKV data")
       }
 
-      val wrappedEncodedRdd = generateKV(distinctWrappedRowRdd, remove = false)
-      splitTableRegion(wrappedEncodedRdd.filter(r => !r.isIndex))
-      splitIndexRegion(wrappedEncodedRdd.filter(r => r.isIndex))
+      val wrappedEncodedRecordRdd = generateRecordKV(distinctWrappedRowRdd, remove = false)
+      val wrappedEncodedIndexRdd = generateIndexKV(sc, distinctWrappedRowRdd, remove = false)
+      splitTableRegion(wrappedEncodedRecordRdd)
+      splitIndexRegion(wrappedEncodedIndexRdd)
 
-      val mergedRDD = wrappedEncodedRdd ++ generateKV(deletion, remove = true)
+      val mergedRDD = wrappedEncodedRecordRdd ++ wrappedEncodedIndexRdd ++ generateRecordKV(
+        deletion,
+        remove = true) ++ generateIndexKV(sc, deletion, remove = true)
       mergedRDD
         .map(wrappedEncodedRow => (wrappedEncodedRow.encodedKey, wrappedEncodedRow))
-        .groupByKey()
+        .reduceByKey { (r1, r2) =>
+          // if rdd contains same key, it means we need first delete the old value and insert the new value associated the
+          // key. We can merge the two operation into one update operation.
+          // Note: the deletion operation's value of kv pair is empty.
+          if (r1.encodedValue.isEmpty) r2 else r1
+        }
         .map {
-          case (key, iterable) =>
-            // if rdd contains same key, it means we need first delete the old value and insert the new value associated the
-            // key. We can merge the two operation into one update operation.
-            // Note: the deletion operation's value of kv pair is empty.
-            iterable.find(value => value.encodedValue.nonEmpty) match {
-              case Some(wrappedEncodedRow) =>
-                WrappedEncodedRow(
-                  wrappedEncodedRow.row,
-                  wrappedEncodedRow.handle,
-                  wrappedEncodedRow.encodedKey,
-                  wrappedEncodedRow.encodedValue,
-                  isIndex = wrappedEncodedRow.isIndex,
-                  wrappedEncodedRow.indexId,
-                  remove = false)
-              case None =>
-                WrappedEncodedRow(
-                  iterable.head.row,
-                  iterable.head.handle,
-                  key,
-                  new Array[Byte](0),
-                  isIndex = iterable.head.isIndex,
-                  iterable.head.indexId,
-                  remove = true)
+          case (k, r) =>
+            if (r.encodedValue.nonEmpty) {
+              WrappedEncodedRow(
+                r.row,
+                r.handle,
+                r.encodedKey,
+                r.encodedValue,
+                isIndex = r.isIndex,
+                r.indexId,
+                remove = false)
+            } else {
+              WrappedEncodedRow(
+                r.row,
+                r.handle,
+                k,
+                new Array[Byte](0),
+                isIndex = r.isIndex,
+                r.indexId,
+                remove = true)
             }
         }
     } else {
@@ -225,11 +231,12 @@ class TiBatchWriteTable(
         WrappedRow(row._1, row._2 + start)
       }
 
-      val wrappedEncodedRdd = generateKV(wrappedRowRdd, remove = false)
-      splitTableRegion(wrappedEncodedRdd.filter(r => !r.isIndex))
-      splitIndexRegion(wrappedEncodedRdd.filter(r => r.isIndex))
+      val wrappedEncodedRowRdd = generateRecordKV(wrappedRowRdd, remove = false)
+      val wrappedEncodedIndexRdd = generateIndexKV(sc, wrappedRowRdd, remove = false)
+      splitTableRegion(wrappedEncodedRowRdd)
+      splitIndexRegion(wrappedEncodedIndexRdd)
 
-      wrappedEncodedRdd
+      wrappedEncodedRowRdd ++ wrappedEncodedIndexRdd
     }
 
     val encodedKVPairRDD =
@@ -629,13 +636,12 @@ class TiBatchWriteTable(
     }
   }
 
-  private def generateKV(rdd: RDD[WrappedRow], remove: Boolean): RDD[WrappedEncodedRow] = {
+  private def generateRecordKV(rdd: RDD[WrappedRow], remove: Boolean): RDD[WrappedEncodedRow] = {
     rdd
       .map { row =>
         {
-          val kvBuf = mutable.ListBuffer.empty[WrappedEncodedRow]
           val (encodedKey, encodedValue) = generateRowKey(row.row, row.handle, remove)
-          kvBuf += WrappedEncodedRow(
+          WrappedEncodedRow(
             row.row,
             row.handle,
             encodedKey,
@@ -643,35 +649,50 @@ class TiBatchWriteTable(
             isIndex = false,
             -1,
             remove)
-          tiTableInfo.getIndices.asScala.foreach { index =>
-            if (index.isUnique) {
-              val (encodedKey, encodedValue) =
-                generateUniqueIndexKey(row.row, row.handle, index, remove)
-              kvBuf += WrappedEncodedRow(
-                row.row,
-                row.handle,
-                encodedKey,
-                encodedValue,
-                isIndex = true,
-                index.getId,
-                remove)
-            } else {
-              val (encodedKey, encodedValue) =
-                generateSecondaryIndexKey(row.row, row.handle, index, remove)
-              kvBuf += WrappedEncodedRow(
-                row.row,
-                row.handle,
-                encodedKey,
-                encodedValue,
-                isIndex = true,
-                index.getId,
-                remove)
-            }
-          }
-          kvBuf
         }
       }
-      .flatMap(identity)
+  }
+
+  private def generateIndexRDD(
+      rdd: RDD[WrappedRow],
+      index: TiIndexInfo,
+      remove: Boolean): RDD[WrappedEncodedRow] = {
+    if (index.isUnique) {
+      rdd.map { row =>
+        val (encodedKey, encodedValue) =
+          generateUniqueIndexKey(row.row, row.handle, index, remove)
+        WrappedEncodedRow(
+          row.row,
+          row.handle,
+          encodedKey,
+          encodedValue,
+          isIndex = true,
+          index.getId,
+          remove)
+      }
+    } else {
+      rdd.map { row =>
+        val (encodedKey, encodedValue) =
+          generateSecondaryIndexKey(row.row, row.handle, index, remove)
+        WrappedEncodedRow(
+          row.row,
+          row.handle,
+          encodedKey,
+          encodedValue,
+          isIndex = true,
+          index.getId,
+          remove)
+      }
+    }
+  }
+
+  private def generateIndexKV(
+      sc: SparkContext,
+      rdd: RDD[WrappedRow],
+      remove: Boolean): RDD[WrappedEncodedRow] = {
+    tiTableInfo.getIndices.asScala
+      .map(index => generateIndexRDD(rdd, index, remove))
+      .foldLeft(sc.emptyRDD[WrappedEncodedRow])(_ ++ _)
   }
 
   // TODO: support physical table later. Need use partition info and row value to
@@ -682,7 +703,9 @@ class TiBatchWriteTable(
 
   private def estimateRegionSplitNum(wrappedEncodedRdd: RDD[WrappedEncodedRow]): Long = {
     val totalSize =
-      wrappedEncodedRdd.map(r => r.encodedKey.bytes.length + r.encodedValue.length).sum()
+      wrappedEncodedRdd.aggregate(0)(
+        (s, r) => r.encodedKey.bytes.length + r.encodedValue.length + s,
+        (s, r) => s + r)
 
     //TODO: replace 96 with actual value read from pd https://github.com/pingcap/tispark/issues/890
     Math.ceil(totalSize / (tiContext.tiConf.getTikvRegionSplitSizeInMB * 1024 * 1024)).toLong
@@ -714,8 +737,8 @@ class TiBatchWriteTable(
         }
 
         val rdd = wrappedEncodedRdd.filter(_.indexId == index.getId).filter { t =>
-            val value = t.row.get(colOffset, dataType)
-            value != null && value.toString != null
+          val value = t.row.get(colOffset, dataType)
+          value != null && value.toString != null
         }
         val regionSplitNum = if (options.regionSplitNum != 0) {
           options.regionSplitNum
@@ -728,34 +751,30 @@ class TiBatchWriteTable(
           val count = rdd.count()
           logger.info(
             s"index region split, regionSplitNum=$regionSplitNum, indexName=${index.getName}")
-          if (count > (regionSplitNum  * 1000 + 1) * 10) {
+          if (count > (regionSplitNum * 1000 + 1) * 10) {
             logger.info("split by sample data")
             val sampleData = rdd.takeSample(false, (regionSplitNum * 1000 + 1).toInt)
             val sortedSampleData = sampleData.sorted(ordering)
             val buf = new StringBuilder
-            for ( i <- 1 until regionSplitNum.toInt) {
+            for (i <- 1 until regionSplitNum.toInt) {
               val indexValue = sortedSampleData(i * 1000).row.get(colOffset, dataType).toString
               buf.append(" (")
               buf.append("\"")
               buf.append(indexValue)
               buf.append("\"")
               buf.append(")")
-              if (i != regionSplitNum -1) {
+              if (i != regionSplitNum - 1) {
                 buf.append(",")
               }
             }
             try {
               tiDBJDBCClient
-                .splitIndexRegion(
-                  options.database,
-                  options.table,
-                  index.getName,
-                  buf.toString())
+                .splitIndexRegion(options.database, options.table, index.getName, buf.toString())
             } catch {
               case e: SQLException =>
-                //if (options.isTest) {
-                  throw e
-               // }
+                // if (options.isTest) {
+                throw e
+              // }
             }
           } else {
             logger.info("split by min/max data")
