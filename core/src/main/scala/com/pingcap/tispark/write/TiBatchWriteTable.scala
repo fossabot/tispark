@@ -117,13 +117,13 @@ class TiBatchWriteTable(
 
         val colOffset =
           colsInDf.zipWithIndex.find(col => autoIncrementColName.equals(col._1)).get._2
-        val hasNullValue = df
+        val hasNullValue = !df
           .filter(row => row.get(colOffset) == null)
-          .count() > 0
+          .rdd
+          .isEmpty()
         if (hasNullValue) {
           throw new TiBatchWriteException(
-            "cannot allocate id on the condition of having null value " +
-              "and valid value on auto increment column")
+            "cannot allocate id on the condition of having null value and valid value on auto increment column")
         }
         df.rdd
       } else {
@@ -463,7 +463,7 @@ class TiBatchWriteTable(
   }
 
   private def checkValueNotNull(rdd: RDD[TiRow]): Unit = {
-    val nullRowCount = rdd
+    val nullRows = rdd
       .filter { row =>
         colsMapInTiDB.exists {
           case (_, v) =>
@@ -474,11 +474,11 @@ class TiBatchWriteTable(
             }
         }
       }
-      .count()
+      .isEmpty()
 
-    if (nullRowCount > 0) {
+    if (nullRows) {
       throw new TiBatchWriteException(
-        s"Insert null value to not null column! $nullRowCount rows contain illegal null values!")
+        s"Insert null value to not null column! rows contain illegal null values!")
     }
   }
 
