@@ -190,7 +190,11 @@ class TiBatchWrite(
     // pre calculate
     val shuffledRDD: RDD[(SerializableKey, Array[Byte])] = {
       val rddList = tiBatchWriteTables.map(_.preCalculate(startTimeStamp))
-      tiContext.sparkSession.sparkContext.union(rddList)
+      if (rddList.lengthCompare(1) == 0) {
+        rddList.head
+      } else {
+        tiContext.sparkSession.sparkContext.union(rddList)
+      }
     }
 
     // take one row as primary key
@@ -207,8 +211,10 @@ class TiBatchWrite(
     logger.info(s"primary key: $primaryKey")
 
     // filter primary key
-    val secondaryKeysRDD = shuffledRDD.filter { keyValue =>
-      !keyValue._1.equals(primaryKey)
+    val secondaryKeysRDD = shuffledRDD.mapPartitions { iter =>
+      iter.map { keyValue =>
+        new BytePairWrapper(keyValue._1.bytes, keyValue._2)
+      }
     }
 
     // driver primary pre-write
@@ -237,11 +243,7 @@ class TiBatchWrite(
       val ti2PCClientOnExecutor =
         new TwoPhaseCommitter(tiConf, startTs, lockTTLSeconds * 1000)
 
-      val pairs = iterator.map { keyValue =>
-        new BytePairWrapper(keyValue._1.bytes, keyValue._2)
-      }.asJava
-
-      ti2PCClientOnExecutor.prewriteSecondaryKeys(primaryKey.bytes, pairs)
+      ti2PCClientOnExecutor.prewriteSecondaryKeys(primaryKey.bytes, iterator.asJava)
 
       try {
         ti2PCClientOnExecutor.close()
@@ -299,12 +301,8 @@ class TiBatchWrite(
       secondaryKeysRDD.foreachPartition { iterator =>
         val ti2PCClientOnExecutor = new TwoPhaseCommitter(tiConf, startTs)
 
-        val keys = iterator.map { keyValue =>
-          new ByteWrapper(keyValue._1.bytes)
-        }.asJava
-
         try {
-          ti2PCClientOnExecutor.commitSecondaryKeys(keys, commitTs)
+          ti2PCClientOnExecutor.commitSecondaryKeys(iterator.asJava, commitTs)
         } catch {
           case e: TiBatchWriteException =>
             // ignored

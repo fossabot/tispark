@@ -213,15 +213,18 @@ public class TwoPhaseCommitter {
       ByteString primaryKey, Iterator<Pair<ByteString, ByteString>> pairs)
       throws TiBatchWriteException {
     int totalSize = 0;
+    ByteString[] keyBytes = new ByteString[WRITE_BUFFER_SIZE];
+    ByteString[] valueBytes = new ByteString[WRITE_BUFFER_SIZE];
+    Pair<ByteString, ByteString> pair;
     while (pairs.hasNext()) {
-      ByteString[] keyBytes = new ByteString[WRITE_BUFFER_SIZE];
-      ByteString[] valueBytes = new ByteString[WRITE_BUFFER_SIZE];
       int size = 0;
       while (size < WRITE_BUFFER_SIZE && pairs.hasNext()) {
-        Pair<ByteString, ByteString> pair = pairs.next();
-        keyBytes[size] = pair.first;
-        valueBytes[size] = pair.second;
-        size++;
+        pair = pairs.next();
+        if (!pair.first.equals(primaryKey)) {
+          keyBytes[size] = pair.first;
+          valueBytes[size] = pair.second;
+          size++;
+        }
       }
 
       BackOffer backOffer = ConcreteBackOffer.newCustomBackOff(BackOffer.BATCH_PREWRITE_BACKOFF);
@@ -410,7 +413,7 @@ public class TwoPhaseCommitter {
    * @param commitTs
    * @return
    */
-  public void commitSecondaryKeys(Iterator<ByteWrapper> keys, long commitTs)
+  public void commitSecondaryKeys(Iterator<BytePairWrapper> keys, long commitTs)
       throws TiBatchWriteException {
 
     Iterator<ByteString> byteStringKeys =
@@ -423,7 +426,7 @@ public class TwoPhaseCommitter {
 
           @Override
           public ByteString next() {
-            return ByteString.copyFrom(keys.next().getBytes());
+            return ByteString.copyFrom(keys.next().getKey());
           }
         };
 
