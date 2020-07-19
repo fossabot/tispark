@@ -84,7 +84,7 @@ class TiBatchWriteTable(
   }
 
   def isDFEmpty: Boolean = {
-    if (TiUtil.isDataFrameEmpty(df)) {
+    if (TiUtil.isDataFrameEmpty(df.select(df.columns.head))) {
       logger.warn(s"the dataframe write to $tiTableRef is empty!")
       true
     } else {
@@ -115,10 +115,9 @@ class TiBatchWriteTable(
             "Column size is matched but cannot find auto increment column by name")
         }
 
-        val colOffset =
-          colsInDf.zipWithIndex.find(col => autoIncrementColName.equals(col._1)).get._2
         val hasNullValue = !df
-          .filter(row => row.get(colOffset) == null)
+          .select(autoIncrementColName)
+          .filter(row => row.get(0) == null)
           .rdd
           .isEmpty()
         if (hasNullValue) {
@@ -463,7 +462,7 @@ class TiBatchWriteTable(
   }
 
   private def checkValueNotNull(rdd: RDD[TiRow]): Unit = {
-    val nullRows = rdd
+    val nullRows = !rdd
       .filter { row =>
         colsMapInTiDB.exists {
           case (_, v) =>
