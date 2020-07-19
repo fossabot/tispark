@@ -727,32 +727,36 @@ class TiBatchWriteTable(
     val colOffset = tiColumn.getOffset
     val dataType = tiColumn.getType
     if (index.isUnique) {
-      rdd.map {
+      rdd.flatMap {
         case row if row.row.get(colOffset, dataType) != null =>
           val (encodedKey, encodedValue) =
             generateUniqueIndexKey(row.row, row.handle, index, remove)
-          WrappedEncodedRow(
-            row.row,
-            row.handle,
-            encodedKey,
-            encodedValue,
-            isIndex = true,
-            index.getId,
-            remove)
+          Some(
+            WrappedEncodedRow(
+              row.row,
+              row.handle,
+              encodedKey,
+              encodedValue,
+              isIndex = true,
+              index.getId,
+              remove))
+        case _ => None
       }
     } else {
-      rdd.map {
+      rdd.flatMap {
         case row if row.row.get(colOffset, dataType) != null =>
           val (encodedKey, encodedValue) =
             generateSecondaryIndexKey(row.row, row.handle, index, remove)
-          WrappedEncodedRow(
-            row.row,
-            row.handle,
-            encodedKey,
-            encodedValue,
-            isIndex = true,
-            index.getId,
-            remove)
+          Some(
+            WrappedEncodedRow(
+              row.row,
+              row.handle,
+              encodedKey,
+              encodedValue,
+              isIndex = true,
+              index.getId,
+              remove))
+        case _ => None
       }
     }
   }
