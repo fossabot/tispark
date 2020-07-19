@@ -729,7 +729,7 @@ class TiBatchWriteTable(
     val dataType = tiColumn.getType
     if (index.isUnique) {
       rdd.map {
-        case row if row.row.get(colOffset, dataType) != null =>
+        row =>
           val (encodedKey, encodedValue) =
             generateUniqueIndexKey(row.row, row.handle, index, remove)
           WrappedEncodedRow(
@@ -743,7 +743,7 @@ class TiBatchWriteTable(
       }
     } else {
       rdd.map {
-        case row if row.row.get(colOffset, dataType) != null =>
+        row =>
           val (encodedKey, encodedValue) =
             generateSecondaryIndexKey(row.row, row.handle, index, remove)
           WrappedEncodedRow(
